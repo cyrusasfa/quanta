@@ -4,9 +4,8 @@ public:
     Grain(int size, int onset, float speed);
     ~Grain();
 
-    void init();
-    void processSample(float* sampleBuffer, int sampleBufferLength, int readPointer, float* out);
-    float window(int phase);
+    void processSample(float* sampleBuffer, int sampleBufferLength, float* out);
+    float window();
 
     void setOnset(int onset);
     void setSpeed(float speed);
@@ -19,6 +18,7 @@ public:
 private:
     int size;
     int onset;
+    float phase;
     float speed;
     bool inactive;
 };

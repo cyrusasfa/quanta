@@ -2,7 +2,7 @@
 #include <math.h>
 
 Grain::Grain(int size, int onset, float speed)
-    : size(size), onset(onset), speed(speed), inactive(true)
+    : size(size), onset(onset), phase(0), speed(speed), inactive(true)
 {
 
 }
@@ -12,14 +12,9 @@ Grain::~Grain()
 
 }
 
-void Grain::init()
+void Grain::processSample(float *sampleBuffer, int sampleBufferLength, float* out)
 {
-    inactive = false; // Make this grain active so it cannot be used
-}
-
-void Grain::processSample(float *sampleBuffer, int sampleBufferLength, int readPointer, float* out)
-{
-    const float position = fmodf(((readPointer - onset) * speed), sampleBufferLength);
+    const float position = fmodf(((onset + phase) * speed), sampleBufferLength);
     const int posBelow = (int) std::floor(position);
     int posAbove = (int) std::ceil(position);
     if (posAbove >= sampleBufferLength) posAbove = 0;
@@ -27,21 +22,17 @@ void Grain::processSample(float *sampleBuffer, int sampleBufferLength, int readP
 
     float  currentSample = sampleBuffer[posBelow] * fracPos + (1 - fracPos) * sampleBuffer[posAbove];
 
-    // // [3]
-    // float currentSample = sampleBuffer[iPosition + startPosition % sampleBufferLength];
-    // float a = sampleBuffer[(iPosition + startPosition) - 3 + sampleBufferLength % sampleBufferLength];
-    // float b = sampleBuffer[(iPosition + startPosition) - 2 + sampleBufferLength % sampleBufferLength];
-    // float c = sampleBuffer[(iPosition + startPosition) - 1 + sampleBufferLength % sampleBufferLength];
-    //
-    // currentSample = cubicinterp(fracPos, a, b, c, currentSample);
-
-    float gain = this->window(readPointer - onset);
+    float gain = this->window();
     *out += gain * currentSample;
 
-    if (++readPointer - onset >= size) inactive = true;
+    if (++phase >= size)
+    {
+        inactive = true;
+        phase = 0;
+    }
 }
 
-float Grain::window(int phase)
+float Grain::window()
 {
     if (0 <= phase && phase < size / 2)
     {
@@ -81,7 +72,6 @@ void Grain::activate()
 
 float Grain::cubicinterp(float x, float y0, float y1, float y2, float y3)
 {
-    // 4-point, 3rd-order Hermite (x-form)
     float c0 = y1;
     float c1 = 0.5f * (y2 - y0);
     float c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3;
@@ -89,3 +79,8 @@ float Grain::cubicinterp(float x, float y0, float y1, float y2, float y3)
 
     return ((c3 * x + c2) * x + c1) * x + c0;
 }
+
+// for (int i = 0; i < 2048; i++) {
+//     double multiplier = 0.5 * (1 - cos(2*PI*i/2047));
+//     dataOut[i] = multiplier * dataIn[i];
+// }
