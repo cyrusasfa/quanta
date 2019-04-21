@@ -10,14 +10,14 @@
 
 Gui sliderGui;
 
-int gLedPulseTime = 40;	    // time for led pulse to stay on
+const int gLedPulseTime = 40;	    // time for led pulse to stay on
 int gLedState = LOW;		// led on or off
-int gLedPin = 0;
+const int gLedPin = 0;
 
 float gInputBuffer[BUFFER_SIZE];		// This is the circular buffer; the window
 int gInputBufferWritePointer = 0;			// can be taken from within it at any time
 
-string gFilename = "time-ended.wav"; // Name of the sound file (in project folder)
+string gFilename = "synth.wav"; // Name of the sound file (in project folder)
 float *gSampleBuffer;			 // Buffer that holds the sound file
 int gSampleBufferLength;		 // The length of the buffer in frames
 int gReadPointer = 0;			 // Position of the last frame we played
@@ -25,6 +25,7 @@ int gReadPointer = 0;			 // Position of the last frame we played
 unique_ptr<Grain> grain;
 vector<unique_ptr<Grain>> grains;
 int gGrainIntervalCounter = 0;
+float nextGrainOnset = 0.01f;
 
 Scope gScope;
 
@@ -54,7 +55,7 @@ bool setup(BelaContext *context, void *userData)
           gFilename.c_str(), gSampleBufferLength,
           gSampleBufferLength / context->audioSampleRate);
 
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < 50; i++)
     {
         grains.push_back(unique_ptr<Grain>(new Grain(2200, 0, 1.0f)));
     }
@@ -63,7 +64,7 @@ bool setup(BelaContext *context, void *userData)
 
     sliderGui.setup(5432, "gui");
   	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", 1, 30, 1, 5);           // number of grains per second
+  	sliderGui.addSlider("Density", 1, 50, 1, 5);           // number of grains per second
   	sliderGui.addSlider("Duration", 10, 100, 1, 50);            // duration of a grain in ms
     sliderGui.addSlider("Speed", 0.1, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
@@ -75,16 +76,22 @@ bool setup(BelaContext *context, void *userData)
     gScope.setup(1, context->digitalSampleRate);
 
     pinMode(context, 0, gLedPin, OUTPUT);
-
     return true;
 }
 
-void startGrain() {
+void startGrain(BelaContext *context) {
     gGrainIntervalCounter = 0;
+    float duration = sliderGui.getSliderValue(1);
+    float speed    = sliderGui.getSliderValue(2);
+    float position = sliderGui.getSliderValue(3);
+
     for (int i = 0; i < grains.size(); i++)
     {
         if (grains[i].get()->isInactive())
         {
+            grains[i].get()->setSpeed(speed);
+            grains[i].get()->setSize((duration / 1000) * context->audioSampleRate);
+            grains[i].get()->setOnset((gInputBufferWritePointer + (int) position) % BUFFER_SIZE);
             grains[i].get()->activate();
             break;
         }
@@ -94,8 +101,6 @@ void startGrain() {
 void render(BelaContext *context, void *userData)
 {
     float density  = sliderGui.getSliderValue(0);
-    float duration = sliderGui.getSliderValue(1);
-    float speed    = sliderGui.getSliderValue(2);
     float position = sliderGui.getSliderValue(3);
     float texture   = sliderGui.getSliderValue(4);
     float blend    = sliderGui.getSliderValue(5);
@@ -121,9 +126,6 @@ void render(BelaContext *context, void *userData)
             if (!grains[i].get()->isInactive())
             {
                 // Tapped? vary speed?
-                grains[i].get()->setOnset(position);
-                grains[i].get()->setSpeed(speed);
-                grains[i].get()->setSize((duration / 1000) * context->audioSampleRate);
                 grains[i].get()->processSample(gInputBuffer, BUFFER_SIZE, &out);
             }
         }
@@ -136,11 +138,12 @@ void render(BelaContext *context, void *userData)
         if (++gGrainIntervalCounter >= context->audioSampleRate / density)
     	{
             // Write the state to the scope
-            gScope.log((float)1);
-			startGrain();
+            // gScope.log((float)1);
+			startGrain(context);
+            nextGrainOnset = -log( rand() % 2 ) / density;
             gLedState = HIGH;
     	} else {
-            gScope.log((float)0);
+            // gScope.log((float)0);
         }
 
 		// Copy input to output
