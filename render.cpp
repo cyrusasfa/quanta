@@ -22,10 +22,11 @@ float *gSampleBuffer;			 // Buffer that holds the sound file
 int gSampleBufferLength;		 // The length of the buffer in frames
 int gReadPointer = 0;			 // Position of the last frame we played
 
-unique_ptr<Grain> grain;
 vector<unique_ptr<Grain>> grains;
+#define NUM_GRAINS = 50;
+
 int gGrainIntervalCounter = 0;
-float nextGrainOnset = 0.01f;
+int nextGrainOnset;
 
 Scope gScope;
 
@@ -55,16 +56,9 @@ bool setup(BelaContext *context, void *userData)
           gFilename.c_str(), gSampleBufferLength,
           gSampleBufferLength / context->audioSampleRate);
 
-    for (int i = 0; i < 50; i++)
-    {
-        grains.push_back(unique_ptr<Grain>(new Grain(2200, 0, 1.0f)));
-    }
-
-    grains[0].get()->activate();
-
     sliderGui.setup(5432, "gui");
   	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", 1, 50, 1, 5);           // number of grains per second
+  	sliderGui.addSlider("Density", -50, 50, 1, -10);           // number of grains per second
   	sliderGui.addSlider("Duration", 10, 100, 1, 50);            // duration of a grain in ms
     sliderGui.addSlider("Speed", 0.1, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
@@ -76,11 +70,22 @@ bool setup(BelaContext *context, void *userData)
     gScope.setup(1, context->digitalSampleRate);
 
     pinMode(context, 0, gLedPin, OUTPUT);
+
+    float density  = sliderGui.getSliderValue(0);
+    nextGrainOnset = context->audioSampleRate / abs(density);
+
+    for (int i = 0; i < NUM_GRAINS; i++)
+    {
+        grains.push_back(unique_ptr<Grain>(new Grain(2200, 0, 1.0f)));
+    }
+
+    grains[0].get()->activate();
+
     return true;
 }
 
 void startGrain(BelaContext *context) {
-    gGrainIntervalCounter = 0;
+    float density = sliderGui.getSliderValue(0);
     float duration = sliderGui.getSliderValue(1);
     float speed    = sliderGui.getSliderValue(2);
     float position = sliderGui.getSliderValue(3);
@@ -96,12 +101,17 @@ void startGrain(BelaContext *context) {
             break;
         }
     }
+
+    if (density < 0) {
+        nextGrainOnset = context->audioSampleRate / abs(density);
+    } else if (density > 0) {
+        float r = (float)random() / (float) RAND_MAX;
+        nextGrainOnset = ((-log( r )) * context->audioSampleRate) / density;
+    }
 }
 
 void render(BelaContext *context, void *userData)
 {
-    float density  = sliderGui.getSliderValue(0);
-    float position = sliderGui.getSliderValue(3);
     float texture   = sliderGui.getSliderValue(4);
     float blend    = sliderGui.getSliderValue(5);
     float freeze   = sliderGui.getSliderValue(6);
@@ -117,10 +127,16 @@ void render(BelaContext *context, void *userData)
     	{
     		gLedState = LOW;	// led off
     	}
+        if (++gGrainIntervalCounter >= nextGrainOnset)
+        {
+            startGrain(context);
+
+            gLedState = HIGH;
+            gGrainIntervalCounter = 0;
+        }
         digitalWrite(context, n, gLedPin, gLedState);
 
         float out = 0.0f;
-
         for (int i = 0; i < grains.size(); i++)
         {
             if (!grains[i].get()->isInactive())
@@ -133,17 +149,6 @@ void render(BelaContext *context, void *userData)
         if (!freeze) {
             gInputBuffer[gInputBufferWritePointer] = in + out * feedback;
             if (++gInputBufferWritePointer >= BUFFER_SIZE) gInputBufferWritePointer = 0;
-        }
-
-        if (++gGrainIntervalCounter >= context->audioSampleRate / density)
-    	{
-            // Write the state to the scope
-            // gScope.log((float)1);
-			startGrain(context);
-            nextGrainOnset = -log( rand() % 2 ) / density;
-            gLedState = HIGH;
-    	} else {
-            // gScope.log((float)0);
         }
 
 		// Copy input to output
