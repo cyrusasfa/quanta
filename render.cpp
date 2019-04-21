@@ -17,20 +17,26 @@ const int gLedPin = 0;
 float gInputBuffer[BUFFER_SIZE];		// This is the circular buffer; the window
 int gInputBufferWritePointer = 0;			// can be taken from within it at any time
 
-string gFilename = "synth.wav"; // Name of the sound file (in project folder)
+string gFilename = "time-ended.wav"; // Name of the sound file (in project folder)
 float *gSampleBuffer;			 // Buffer that holds the sound file
 int gSampleBufferLength;		 // The length of the buffer in frames
 int gReadPointer = 0;			 // Position of the last frame we played
 
 vector<unique_ptr<Grain>> grains;
-#define NUM_GRAINS = 50;
+const int NUM_GRAINS = 50;
 
 int gGrainIntervalCounter = 0;
 int nextGrainOnset;
 
 Scope gScope;
+float gAudioSampleRate;
+
+// Thread for grain scheduling
+AuxiliaryTask gScheduleGrainTask;
 
 using namespace std;
+
+void schedule_grain_background(void *);
 
 bool setup(BelaContext *context, void *userData)
 {
@@ -58,7 +64,7 @@ bool setup(BelaContext *context, void *userData)
 
     sliderGui.setup(5432, "gui");
   	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", -50, 50, 1, -10);           // number of grains per second
+  	sliderGui.addSlider("Density", -16, 16, 1, -10);           // number of grains per second
   	sliderGui.addSlider("Duration", 10, 100, 1, 50);            // duration of a grain in ms
     sliderGui.addSlider("Speed", 0.1, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
@@ -81,33 +87,48 @@ bool setup(BelaContext *context, void *userData)
 
     grains[0].get()->activate();
 
+    gAudioSampleRate = context->audioSampleRate;
+
+    gScheduleGrainTask = Bela_createAuxiliaryTask(schedule_grain_background, 50, "bela-schedule-grain");
+
     return true;
 }
 
-void startGrain(BelaContext *context) {
+void startGrain(float sampleRate) {
     float density = sliderGui.getSliderValue(0);
     float duration = sliderGui.getSliderValue(1);
     float speed    = sliderGui.getSliderValue(2);
     float position = sliderGui.getSliderValue(3);
 
+    // Activate a grain with current params
     for (int i = 0; i < grains.size(); i++)
     {
         if (grains[i].get()->isInactive())
         {
+            // TODO: randomly set onset? vary duration?
             grains[i].get()->setSpeed(speed);
-            grains[i].get()->setSize((duration / 1000) * context->audioSampleRate);
+            grains[i].get()->setSize((duration / 1000) * sampleRate);
             grains[i].get()->setOnset((gInputBufferWritePointer + (int) position) % BUFFER_SIZE);
             grains[i].get()->activate();
             break;
         }
     }
 
+    // Schedule the next grain's onset
     if (density < 0) {
-        nextGrainOnset = context->audioSampleRate / abs(density);
+        nextGrainOnset = sampleRate / abs(density);
     } else if (density > 0) {
         float r = (float)random() / (float) RAND_MAX;
-        nextGrainOnset = ((-log( r )) * context->audioSampleRate) / density;
+        nextGrainOnset = ((-log( r )) * sampleRate) / density;
     }
+
+    gLedState = HIGH;
+    gGrainIntervalCounter = 0;
+}
+
+void schedule_grain_background(void * arg)
+{
+	startGrain(gAudioSampleRate);
 }
 
 void render(BelaContext *context, void *userData)
@@ -127,12 +148,10 @@ void render(BelaContext *context, void *userData)
     	{
     		gLedState = LOW;	// led off
     	}
+
         if (++gGrainIntervalCounter >= nextGrainOnset)
         {
-            startGrain(context);
-
-            gLedState = HIGH;
-            gGrainIntervalCounter = 0;
+            Bela_scheduleAuxiliaryTask(gScheduleGrainTask);
         }
         digitalWrite(context, n, gLedPin, gLedState);
 
@@ -141,7 +160,6 @@ void render(BelaContext *context, void *userData)
         {
             if (!grains[i].get()->isInactive())
             {
-                // Tapped? vary speed?
                 grains[i].get()->processSample(gInputBuffer, BUFFER_SIZE, &out);
             }
         }
