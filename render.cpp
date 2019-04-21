@@ -3,30 +3,30 @@
 #include <SampleLoader.h>
 #include <SampleData.h>
 #include <Grain.h>
-#include <Gui.h>        // Need this to use the GUI
+#include <Gui.h>
+#include <Scope.h>
 
 #define BUFFER_SIZE 16384				// Save a longer history
 
 Gui sliderGui;
 
-int gWindowSize = 1024;					// Size of the window
-
-int gHopSize = 512;						// How often we calculate a window
+int gLedPulseTime = 40;	    // time for led pulse to stay on
+int gLedState = LOW;		// led on or off
+int gLedPin = 0;
 
 float gInputBuffer[BUFFER_SIZE];		// This is the circular buffer; the window
 int gInputBufferWritePointer = 0;			// can be taken from within it at any time
 
-int gHopCounter = 0;					// Counter for hop size
-
-string gFilename = "drumloop.wav"; // Name of the sound file (in project folder)
+string gFilename = "time-ended.wav"; // Name of the sound file (in project folder)
 float *gSampleBuffer;			 // Buffer that holds the sound file
 int gSampleBufferLength;		 // The length of the buffer in frames
 int gReadPointer = 0;			 // Position of the last frame we played
 
 unique_ptr<Grain> grain;
 vector<unique_ptr<Grain>> grains;
-
 int gGrainIntervalCounter = 0;
+
+Scope gScope;
 
 using namespace std;
 
@@ -63,12 +63,18 @@ bool setup(BelaContext *context, void *userData)
 
     sliderGui.setup(5432, "gui");
   	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", 0.5, 80, 0.5, 10);           // number of concurrent grains per second
-  	sliderGui.addSlider("Duration", 5, 200, 1, 100);            // duration of a grain in ms
+  	sliderGui.addSlider("Density", 1, 30, 1, 5);           // number of grains per second
+  	sliderGui.addSlider("Duration", 10, 100, 1, 50);            // duration of a grain in ms
     sliderGui.addSlider("Speed", 0.1, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
     sliderGui.addSlider("Texture", 0, 1, 0.01, 0.5);
     sliderGui.addSlider("Blend", 0, 1, 0.01, 0.5);
+    sliderGui.addSlider("Freeze", 0, 1, 1, 0.0f);
+    sliderGui.addSlider("Feedback", 0, 0.99, 0.01, 0.5);
+
+    gScope.setup(1, context->digitalSampleRate);
+
+    pinMode(context, 0, gLedPin, OUTPUT);
 
     return true;
 }
@@ -91,7 +97,10 @@ void render(BelaContext *context, void *userData)
     float duration = sliderGui.getSliderValue(1);
     float speed    = sliderGui.getSliderValue(2);
     float position = sliderGui.getSliderValue(3);
+    float texture   = sliderGui.getSliderValue(4);
     float blend    = sliderGui.getSliderValue(5);
+    float freeze   = sliderGui.getSliderValue(6);
+    float feedback = sliderGui.getSliderValue(7);
 
     for(unsigned int n = 0; n < context->audioFrames; n++) {
         // Read the next sample from the buffer
@@ -99,8 +108,11 @@ void render(BelaContext *context, void *userData)
         if(++gReadPointer >= gSampleBufferLength)
         	gReadPointer = 0;
 
-        gInputBuffer[gInputBufferWritePointer] = in;
-        if (++gInputBufferWritePointer >= BUFFER_SIZE) gInputBufferWritePointer = 0;
+        if (gGrainIntervalCounter >= gLedPulseTime * context->audioSampleRate / 1000.0)
+    	{
+    		gLedState = LOW;	// led off
+    	}
+        digitalWrite(context, n, gLedPin, gLedState);
 
         float out = 0.0f;
 
@@ -108,7 +120,7 @@ void render(BelaContext *context, void *userData)
         {
             if (!grains[i].get()->isInactive())
             {
-                // grains[i].get()->setSize(duration / 1000 * context->audioSampleRate);
+                // Tapped? vary speed?
                 grains[i].get()->setOnset(position);
                 grains[i].get()->setSpeed(speed);
                 grains[i].get()->setSize((duration / 1000) * context->audioSampleRate);
@@ -116,14 +128,24 @@ void render(BelaContext *context, void *userData)
             }
         }
 
+        if (!freeze) {
+            gInputBuffer[gInputBufferWritePointer] = in + out * feedback;
+            if (++gInputBufferWritePointer >= BUFFER_SIZE) gInputBufferWritePointer = 0;
+        }
+
         if (++gGrainIntervalCounter >= context->audioSampleRate / density)
     	{
+            // Write the state to the scope
+            gScope.log((float)1);
 			startGrain();
-    	}
+            gLedState = HIGH;
+    	} else {
+            gScope.log((float)0);
+        }
 
 		// Copy input to output
 		for(unsigned int channel = 0; channel < context->audioOutChannels; channel++) {
-			audioWrite(context, n, channel, out);
+			audioWrite(context, n, channel, in * (1 - blend) + out * blend);
 		}
 	}
 }
