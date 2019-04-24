@@ -4,7 +4,7 @@ public:
     Grain(int size, int onset, float speed, float alpha);
     ~Grain();
 
-    void processSample(float* sampleBuffer, int sampleBufferLength, float* out);
+    void processSample(float* sampleBuffer, int sampleBufferLength, float* out, float* window, int winLen);
     float window();
 
     void setOnset(int onset);
@@ -16,6 +16,7 @@ public:
     bool isInactive();
 
     static float cubicinterp(float x, float y0, float y1, float y2, float y3);
+    static float linearInterp(float* sampleBuffer, int sampleBufferLength, float position);
 private:
     int size;
     int onset;

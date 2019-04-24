@@ -21,13 +21,13 @@ int gInputBufferWritePointer = 0;			// can be taken from within it at any time
 float gWindow[WINDOW_SIZE];
 
 
-string gFilename = "drumloop.wav"; // Name of the sound file (in project folder)
+string gFilename = "waves.wav"; // Name of the sound file (in project folder)
 float *gSampleBuffer;			 // Buffer that holds the sound file
 int gSampleBufferLength;		 // The length of the buffer in frames
 int gReadPointer = 0;			 // Position of the last frame we played
 
 vector<unique_ptr<Grain>> grains;
-const int NUM_GRAINS = 32;
+const int NUM_GRAINS = 80;
 
 int gGrainIntervalCounter = 0;
 int nextGrainOnset;
@@ -68,9 +68,9 @@ bool setup(BelaContext *context, void *userData)
 
     sliderGui.setup(5432, "gui");
   	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", -15, 15, 1, -10);           // number of grains per second
+  	sliderGui.addSlider("Density", -80, 80, 1, -10);           // number of grains per second
   	sliderGui.addSlider("Duration", 15, 250, 1, 50);            // duration of a grain in ms
-    sliderGui.addSlider("Speed", 0.1, 2, 0.1, 1);               // speed of grains, affecting the pitch
+    sliderGui.addSlider("Speed", 0.5, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
     sliderGui.addSlider("Texture", 0.5, 1, 0.01, 1);
     sliderGui.addSlider("Blend", 0, 1, 0.01, 0.5);
@@ -96,12 +96,27 @@ bool setup(BelaContext *context, void *userData)
     {
         if (0 <= i && i < WINDOW_SIZE / 2)
         {
-            return 0.5f * (1.0f + cosf((float) 2.0f * M_PI / WINDOW_SIZE * (i - WINDOW_SIZE / 2.0f)));
+            gWindow[i] = 0.5f * (1.0f + cosf((float) 2.0f * M_PI / WINDOW_SIZE * (i - WINDOW_SIZE / 2.0f)));
         }
-        else if (WINDOW_SIZE - WINDOW_SIZE / 2.0f <= i && i <= WINDOW_SIZE)
+        else if (WINDOW_SIZE - WINDOW_SIZE / 2.0f <= i && i < WINDOW_SIZE)
         {
-            return 0.5f * (1.0f + cosf((float) 2.0f * M_PI / WINDOW_SIZE * (i - 1.0f - WINDOW_SIZE / 2.0f)));
+            gWindow[i] = 0.5f * (1.0f + cosf((float) 2.0f * M_PI / WINDOW_SIZE * (i - 1.0f - WINDOW_SIZE / 2.0f)));
+        } else {
+            gWindow[i] = 0.0f;
         }
+
+        // if (0 <= i && i < floor(0.5f * WINDOW_SIZE / 2.0f))
+        // {
+        //     gWindow[i] = 0.5f * (1.0f + cosf(M_PI * (((2.0f * i) / (0.5f * WINDOW_SIZE) - 1.0f))));
+        // }
+        // else if (floor(0.5f * WINDOW_SIZE / 2.0f) <= i && i <= WINDOW_SIZE * (1.0f - 0.5f / 2.0f))
+        // {
+        //     gWindow[i] = 1.0f;
+        // }
+        // else if (WINDOW_SIZE * (1.0f - 0.5f / 2.0f) < i && i < WINDOW_SIZE)
+        // {
+        //     gWindow[i] = 0.5f * (1 + cosf(M_PI * (((2.0f * i) / (0.5f * WINDOW_SIZE) - (2.0f / 0.5f) + 1.0f))));
+        // }
     }
 
     // Activate the first grain
@@ -191,7 +206,7 @@ void render(BelaContext *context, void *userData)
             {
                 // Process sample for this active grain
                 // Grain passed a reference to out, which will accumulate grain values
-                grains[i].get()->processSample(gInputBuffer, BUFFER_SIZE, &out);
+                grains[i].get()->processSample(gInputBuffer, BUFFER_SIZE, &out, gWindow, WINDOW_SIZE);
             }
         }
 
