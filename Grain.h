@@ -1,7 +1,7 @@
 class Grain
 {
 public:
-    Grain(int size, int onset, float speed);
+    Grain(int size, int onset, float speed, float alpha);
     ~Grain();
 
     void processSample(float* sampleBuffer, int sampleBufferLength, float* out);
@@ -10,6 +10,7 @@ public:
     void setOnset(int onset);
     void setSpeed(float speed);
     void setSize(int size);
+    void setTexture(float texture);
 
     void activate();
     bool isInactive();
@@ -21,4 +22,7 @@ private:
     float phase;
     float speed;
     bool inactive;
+    float texture;
+
+    float winPhase;
 };

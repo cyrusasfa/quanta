@@ -1,8 +1,8 @@
 #include "Grain.h"
 #include <math.h>
 
-Grain::Grain(int size, int onset, float speed)
-    : size(size), onset(onset), phase(0), speed(speed), inactive(true)
+Grain::Grain(int size, int onset, float speed, float texture)
+    : size(size), onset(onset), phase(0), speed(speed), inactive(true), texture(texture)
 {
 
 }
@@ -34,15 +34,27 @@ void Grain::processSample(float *sampleBuffer, int sampleBufferLength, float* ou
 
 float Grain::window()
 {
-    if (0 <= phase && phase < size / 2)
+    // if (0 <= phase && phase < size / 2)
+    // {
+    //     return 0.5f * (1 + cosf((float) 2 * M_PI / size * (phase - size / 2)));
+    // }
+    // else if (size - size / 2 <= phase && phase <= size)
+    // {
+    //     return 0.5f * (1 + cosf((float) 2 * M_PI / size * (phase - 1 - size / 2)));
+    // }
+    // return 0;
+    if (0 <= phase && phase < floor(texture * size / 2.0f))
     {
-        return 0.5 * (1 + cos(2 * M_PI / size * (phase - size / 2)));
+        return 0.5f * (1 + cosf(M_PI * (((2.0f * phase) / (texture * size) - 1))));
     }
-    else if (size - size / 2 <= phase && phase <= size)
+    else if (floor(texture * size / 2.0f) <= phase && phase <= size * (1 - texture / 2.0f))
     {
-        return 0.5 * (1 + cos(2 * M_PI / size * (phase - 1 - size / 2)));
+        return 1.0f;
     }
-    return 0;
+    else if (size * (1 - texture / 2.0f) < phase && phase < size)
+    {
+        return 0.5f * (1 + cosf(M_PI * (((2.0f * phase) / (texture * size) - (2.0f / texture) + 1))));
+    }
 }
 
 void Grain::setOnset(int onset)
@@ -58,6 +70,11 @@ void Grain::setSpeed(float speed)
 void Grain::setSize(int size)
 {
     this->size = size;
+}
+
+void Grain::setTexture(float texture)
+{
+    this->texture = texture;
 }
 
 bool Grain::isInactive()
@@ -79,8 +96,3 @@ float Grain::cubicinterp(float x, float y0, float y1, float y2, float y3)
 
     return ((c3 * x + c2) * x + c1) * x + c0;
 }
-
-// for (int i = 0; i < 2048; i++) {
-//     double multiplier = 0.5 * (1 - cos(2*PI*i/2047));
-//     dataOut[i] = multiplier * dataIn[i];
-// }
