@@ -76,9 +76,9 @@ bool setup(BelaContext *context, void *userData)
           gSampleBufferLength / context->audioSampleRate);
 
     sliderGui.setup(5432, "gui");
-  	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", -NUM_GRAINS, NUM_GRAINS, 1, -10);           // number of grains per second
-  	sliderGui.addSlider("Duration", 15, 250, 1, 50);            // duration of a grain in ms
+    // Arguments: name, minimum, maximum, increment, default value
+    sliderGui.addSlider("Density", -NUM_GRAINS, NUM_GRAINS, 1, -10);           // number of grains per second
+    sliderGui.addSlider("Duration", 15, 250, 1, 50);            // duration of a grain in ms
     sliderGui.addSlider("Speed", 0.5, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
     sliderGui.addSlider("Blend", 0, 1, 0.01, 0.5);
