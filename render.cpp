@@ -1,46 +1,55 @@
 #include <Bela.h>
 #include <cstring>
+#include <stdio.h>
+#include <math.h>
 #include <SampleLoader.h>
 #include <SampleData.h>
-#include <Grain.h>
 #include <Gui.h>
-#include <Scope.h>
+#include <Compressor.h>
+#include <Grain.h>
+#include <Button.h>
 
-#define BUFFER_SIZE 16384				// Save a longer history
+#define BUFFER_SIZE 16384
 #define WINDOW_SIZE 1024
 
 Gui sliderGui;
 
-const int gLedPulseTime = 40;	    // time for led pulse to stay on
-int gLedState = LOW;		// led on or off
+const int gLedPulseTime = 20;	    // time for led pulse to stay on
+int gLedState = LOW;		        // led on or off
 const int gLedPin = 0;
 
-float gInputBuffer[BUFFER_SIZE];		// This is the circular buffer; the window
-int gInputBufferWritePointer = 0;			// can be taken from within it at any time
+const int gButtonPin = 2; // Freeze button
+Button gButton(gButtonPin);
+
+int kDensity = 0;  // Analog Pin of pot controlling density
+int kDuration = 1;  // Analog Pin of pot controlling duration
+int kSpeed = 2;  // Analog Pin of pot controlling speed
+int kPosition = 3;  // Analog Pin of pot controlling position
+int kBlend = 4;  // Analog Pin of pot controlling blend
+int kFeedback = 5;  // Analog Pin of pot controlling feedback
+
+float gInputBuffer[BUFFER_SIZE];   // Circular audio input buffer
+int gInputBufferWritePointer = 0;  // write pointer into the buffer
 
 float gWindow[WINDOW_SIZE];
 
+string gFilename = "time-ended.wav";     // Name of the sound file to be read
+float *gSampleBuffer;			    // Buffer holding sound file
+int gSampleBufferLength;		    // The length of the buffer in frames
+int gReadPointer = 0;			    // Read poisition into the sound file buffer
 
-string gFilename = "waves.wav"; // Name of the sound file (in project folder)
-float *gSampleBuffer;			 // Buffer that holds the sound file
-int gSampleBufferLength;		 // The length of the buffer in frames
-int gReadPointer = 0;			 // Position of the last frame we played
+vector<unique_ptr<Grain>> grains;  // pool of grain objects that can be scheduled to run
+const int NUM_GRAINS = 60;         // number of grain objects to initialise
 
-vector<unique_ptr<Grain>> grains;
-const int NUM_GRAINS = 80;
+int gGrainIntervalCounter = 0;    // frames since last grain onset
+int nextGrainOnset;               // number of frames interval until next grain onset
+bool gFrozen;
 
-int gGrainIntervalCounter = 0;
-int nextGrainOnset;
+float gAudioSampleRate;           // global audio sample rate
 
-Scope gScope;
-float gAudioSampleRate;
-
-// Thread for grain scheduling
-AuxiliaryTask gScheduleGrainTask;
+Compressor compressor;          // compressor to perform audio limiting
 
 using namespace std;
-
-void schedule_grain_background(void *);
 
 bool setup(BelaContext *context, void *userData)
 {
@@ -68,27 +77,24 @@ bool setup(BelaContext *context, void *userData)
 
     sliderGui.setup(5432, "gui");
   	// Arguments: name, minimum, maximum, increment, default value
-  	sliderGui.addSlider("Density", -80, 80, 1, -10);           // number of grains per second
+  	sliderGui.addSlider("Density", -NUM_GRAINS, NUM_GRAINS, 1, -10);           // number of grains per second
   	sliderGui.addSlider("Duration", 15, 250, 1, 50);            // duration of a grain in ms
     sliderGui.addSlider("Speed", 0.5, 2, 0.1, 1);               // speed of grains, affecting the pitch
     sliderGui.addSlider("Position", 0, BUFFER_SIZE - 1, 1, 0);  // position to start from in the record buffer
-    sliderGui.addSlider("Texture", 0.5, 1, 0.01, 1);
     sliderGui.addSlider("Blend", 0, 1, 0.01, 0.5);
-    sliderGui.addSlider("Freeze", 0, 1, 1, 0.0f);
     sliderGui.addSlider("Feedback", 0, 0.99, 0.01, 0.5);
 
-    gScope.setup(1, context->digitalSampleRate);
-
     pinMode(context, 0, gLedPin, OUTPUT);
+    pinMode(context, 0, gButtonPin, INPUT);
 
     // Set the first grain's onset
     float density  = sliderGui.getSliderValue(0);
-    nextGrainOnset = context->audioSampleRate / abs(density);
+    nextGrainOnset = context->audioSampleRate / abs(density); // set the first grain's onset
 
     // Initialise pool of inactive grain objects
     for (int i = 0; i < NUM_GRAINS; i++)
     {
-        grains.push_back(unique_ptr<Grain>(new Grain(2200, 0, 1.0f, 1.0)));
+        grains.push_back(unique_ptr<Grain>(new Grain(2200, 0, 1.0f)));
     }
 
     // Initialise cosine window wavetable
@@ -104,19 +110,6 @@ bool setup(BelaContext *context, void *userData)
         } else {
             gWindow[i] = 0.0f;
         }
-
-        // if (0 <= i && i < floor(0.5f * WINDOW_SIZE / 2.0f))
-        // {
-        //     gWindow[i] = 0.5f * (1.0f + cosf(M_PI * (((2.0f * i) / (0.5f * WINDOW_SIZE) - 1.0f))));
-        // }
-        // else if (floor(0.5f * WINDOW_SIZE / 2.0f) <= i && i <= WINDOW_SIZE * (1.0f - 0.5f / 2.0f))
-        // {
-        //     gWindow[i] = 1.0f;
-        // }
-        // else if (WINDOW_SIZE * (1.0f - 0.5f / 2.0f) < i && i < WINDOW_SIZE)
-        // {
-        //     gWindow[i] = 0.5f * (1 + cosf(M_PI * (((2.0f * i) / (0.5f * WINDOW_SIZE) - (2.0f / 0.5f) + 1.0f))));
-        // }
     }
 
     // Activate the first grain
@@ -124,32 +117,26 @@ bool setup(BelaContext *context, void *userData)
 
     // Set global sample rate
     gAudioSampleRate = context->audioSampleRate;
-
-    gScheduleGrainTask = Bela_createAuxiliaryTask(schedule_grain_background, 50, "bela-schedule-grain");
+    compressor.prepareToPlay(gAudioSampleRate);
 
     return true;
 }
 
-void startGrain(float sampleRate) {
-    float density = sliderGui.getSliderValue(0);
-    float duration = sliderGui.getSliderValue(1);
-    float speed    = sliderGui.getSliderValue(2);
-    float position = sliderGui.getSliderValue(3);
-    float texture   = sliderGui.getSliderValue(4);
-
+void startGrain(float density, float duration, float speed, float position)
+{
     // Activate a grain object with the current params with onset at current read position
     for (int i = 0; i < grains.size(); i++)
     {
         if (grains[i].get()->isInactive())
         {
-            // TODO: randomly set onset? vary duration?
-            // Set the grains params
+            // Initialise grain parameters
             grains[i].get()->setSpeed(speed);
-            grains[i].get()->setSize((duration / 1000) * sampleRate);
+            // Set the size of the grain in sample according to the current grain duration
+            grains[i].get()->setSize((duration / 1000) * gAudioSampleRate);
             // Set onset of grain to current offset from write pointer
             grains[i].get()->setOnset((gInputBufferWritePointer + (int) position) % BUFFER_SIZE);
-            grains[i].get()->setTexture(texture);
-            grains[i].get()->activate();
+
+            grains[i].get()->activate(); // set grain's state to active
             break;
         }
     }
@@ -157,33 +144,46 @@ void startGrain(float sampleRate) {
     // Schedule the next grain's onset
     if (density < 0) {
         // constant spaced interval between grains, according to the density
-        nextGrainOnset = sampleRate / abs(density);
+        nextGrainOnset = gAudioSampleRate / abs(density);
     } else if (density > 0) {
-        // generate a stochastic next onset time averaged by the density
+        // generate a stochastic next onset time, averaged by the density
         float r = (float)random() / (float) RAND_MAX;
-        nextGrainOnset = ((-log( r )) * sampleRate) / density;
+        nextGrainOnset = ((-log( r )) * gAudioSampleRate) / density;
     }
-
     // Start LED pulse
     gLedState = HIGH;
     // Reset inter-grain onset counter
     gGrainIntervalCounter = 0;
 }
 
-void schedule_grain_background(void * arg)
-{
-	startGrain(gAudioSampleRate);
+void readButton(BelaContext* context, int frame) {
+	/* Debounce the button
+	   If the button is closed and was not closed before, then invert freeze state
+	*/
+	gButton.debounce(context, frame);
+	if (gButton.isClosed() && !gButton.wasClosed())
+	{
+        // Invert the frozen state
+		gFrozen = !gFrozen;
+	}
 }
 
 void render(BelaContext *context, void *userData)
 {
-    float blend    = sliderGui.getSliderValue(5);
-    float freeze   = sliderGui.getSliderValue(6);
-    float feedback = sliderGui.getSliderValue(7);
+    float blend = sliderGui.getSliderValue(4);
+    float feedback    = sliderGui.getSliderValue(5);
 
-    for(unsigned int n = 0; n < context->audioFrames; n++) {
+    for (unsigned int n = 0; n < context->audioFrames; n++)
+    {
         // Read the next sample from the buffer
+        readButton(context, n);
+
         float in = gSampleBuffer[gReadPointer];
+        // float in = 0;
+        // for(unsigned int ch = 0; ch < context->audioInChannels; ch++) {
+        //     in += audioRead(context, n, ch);
+        // }
+        // in /= (float)context->audioInChannels;
         if(++gReadPointer >= gSampleBufferLength)
         	gReadPointer = 0;
 
@@ -193,12 +193,19 @@ void render(BelaContext *context, void *userData)
     		gLedState = LOW;	// led off
     	}
 
+        // Activate a grain if the current inter-grain onset interval since
+        // the last grain's onset has elapsed
         if (++gGrainIntervalCounter >= nextGrainOnset)
         {
-            Bela_scheduleAuxiliaryTask(gScheduleGrainTask);
+            float density = sliderGui.getSliderValue(0);
+            float duration = sliderGui.getSliderValue(1);
+            float speed    = sliderGui.getSliderValue(2);
+            float position = sliderGui.getSliderValue(3);
+
+            startGrain(density, duration, speed, position);
         }
 
-        // Read from all the active grains
+        // Read from all active grains
         float out = 0.0f;
         for (int i = 0; i < grains.size(); i++)
         {
@@ -210,12 +217,16 @@ void render(BelaContext *context, void *userData)
             }
         }
 
+        compressor.processSample(&out);
+
         // If not in freeze mode then write incoming sample and feedback to the buffer
-        if (!freeze) {
+        if (!gFrozen) {
+            // Mix audio input and feedback granulated output from the record buffer back into the record buffer
             gInputBuffer[gInputBufferWritePointer] = in + out * feedback;
             if (++gInputBufferWritePointer >= BUFFER_SIZE) gInputBufferWritePointer = 0;
         }
 
+        // Write LED state to LED digital pin
         digitalWrite(context, n, gLedPin, gLedState);
 
         // Write to output the dry/wet input sample and sample output from the grains
@@ -228,4 +239,5 @@ void render(BelaContext *context, void *userData)
 void cleanup(BelaContext *context, void *userData)
 {
     delete[] gSampleBuffer;
+    grains.clear();
 }
